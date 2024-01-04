@@ -8,6 +8,7 @@
       <change beforePath="$PROJECT_DIR$/.idea/.gitignore" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/CenterNet.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/CenterNet.iml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/modules.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -288,7 +289,7 @@
       <workItem from="1704353718487" duration="3260000" />
       <workItem from="1704357058973" duration="857000" />
       <workItem from="1704358447193" duration="576000" />
-      <workItem from="1704362423055" duration="731000" />
+      <workItem from="1704362423055" duration="1804000" />
     </task>
     <servers />
   </component>
