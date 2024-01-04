@@ -46,5 +46,5 @@ Please read requirements.txt
 ![image](3.jpg)
 2. Our code is just a demo, there are still a lot of things that need to be improved, for example, we don't use the argparse module to get the input parameters. We will improve the network later.
 3. The code works both in windows and Linux environments!
-4. The training model and dataset are avaliable in this link: https://drive.google.com/drive/folders/1_9adDfYCc0HfKadxI1GbkmTfuz58J0ca
+4. The training model and dataset are available in this link: https://drive.google.com/drive/folders/1_9adDfYCc0HfKadxI1GbkmTfuz58J0ca
 
