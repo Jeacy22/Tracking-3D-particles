@@ -45,6 +45,6 @@ Please read requirements.txt
 1. Four backbones are available in the networks file within the model directory, with the ResNetx proving to be the most effective which is also proposed in the paper.  
 ![image](3.jpg)
 2. Our code is just a demo, there are still a lot of things that need to be improved, for example, we don't use the argparse module to get the input parameters. We will improve the network later.
-3. What is stored inside the logs file is the trained model and the changes in parameters such as loss during training.
-4. The code works both in windows and Linux environments!  
+3. The code works both in windows and Linux environments!
+4. The training model and dataset are avaliable in this link: https://drive.google.com/drive/folders/1_9adDfYCc0HfKadxI1GbkmTfuz58J0ca
 
