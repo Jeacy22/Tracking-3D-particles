@@ -48,10 +48,8 @@ def translate(fdir, lists,file_dir_xml):
         if png[-4:] == '.png':
             image = cv2.imread(png)
             h, w, d = image.shape
-
             fxml = file_dir_xml+png[-9:-4]+'.xml'
-
-            fxml = open(fxml, 'w') #写入xml文件
+            fxml = open(fxml, 'w')
             imgfile = png.split('/')[-1]
             source['name'] = imgfile
             source['path'] = png
@@ -71,7 +69,6 @@ def translate(fdir, lists,file_dir_xml):
                 lines = [lines]
 
         for box in lines:
-            # print(box.shape)
             if box.shape != (8,):
                 box = lines
 
@@ -81,26 +78,19 @@ def translate(fdir, lists,file_dir_xml):
             elif int(box[7])==1:
                 label['class'] = "big"
 
-
-            r=65
             centerx = float(box[4])
             centery = float(box[5])
             xmin = centerx-20
             ymin = centery-20
             xmax = centerx+20
             ymax = centery+20
-
             label['xmin'] = xmin
             label['ymin'] = ymin
             label['xmax'] = xmax
             label['ymax'] = ymax
             label['deptho'] = box[6]
-
-
-
             fxml.write(out1 % label)
         fxml.write(out2)
-
 
 if __name__ == '__main__':
     file_dir = ''
@@ -109,7 +99,6 @@ if __name__ == '__main__':
     for i in os.listdir(file_dir):
         if i[-3:] == 'png':
             lists.append(file_dir + '/' + i)
-            # print(lists)
     translate(file_dir, lists,file_dir_xml)
     print('---------------Done!!!--------------')
 

@@ -520,8 +520,6 @@ def fill_fc_weights(layers):
     for m in layers.modules():
         if isinstance(m, nn.Conv2d):
             nn.init.normal_(m.weight, std=0.001)
-            # torch.nn.init.kaiming_normal_(m.weight.data, nonlinearity='relu')
-            # torch.nn.init.xavier_normal_(m.weight.data)
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
 
@@ -538,12 +536,7 @@ class DLASeg(nn.Module):
         channels = self.base.channels
         scales = [2 ** i for i in range(len(channels[self.first_level:]))]
         self.dla_up = DLAUp(channels[self.first_level:], scales=scales)
-        '''
-        self.fc = nn.Sequential(
-            nn.Conv2d(channels[self.first_level], classes, kernel_size=1,
-                      stride=1, padding=0, bias=True)
-        )
-        '''
+
 
         for head in self.heads:
             classes = self.heads[head]
@@ -560,29 +553,6 @@ class DLASeg(nn.Module):
                 fill_fc_weights(fc)
             self.__setattr__(head, fc)
 
-        '''
-        up_factor = 2 ** self.first_level
-        if up_factor > 1:
-            up = nn.ConvTranspose2d(classes, classes, up_factor * 2,
-                                    stride=up_factor, padding=up_factor // 2,
-                                    output_padding=0, groups=classes,
-                                    bias=False)
-            fill_up_weights(up)
-            up.weight.requires_grad = False
-        else:
-            up = Identity()
-        self.up = up
-        self.softmax = nn.LogSoftmax(dim=1)
-
-
-        for m in self.fc.modules():
-            if isinstance(m, nn.Conv2d):
-                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-                m.weight.data.normal_(0, math.sqrt(2. / n))
-            elif isinstance(m, BatchNorm):
-                m.weight.data.fill_(1)
-                m.bias.data.zero_()
-        '''
 
     def forward(self, x):
         x = self.base(x)
@@ -594,39 +564,6 @@ class DLASeg(nn.Module):
             ret[head] = self.__getattr__(head)(x)
         return [ret]
 
-    '''
-    def optim_parameters(self, memo=None):
-        for param in self.base.parameters():
-            yield param
-        for param in self.dla_up.parameters():
-            yield param
-        for param in self.fc.parameters():
-            yield param
-    '''
-
-
-'''
-def dla34up(classes, pretrained_base=None, **kwargs):
-    model = DLASeg('dla34', classes, pretrained_base=pretrained_base, **kwargs)
-    return model
-
-
-def dla60up(classes, pretrained_base=None, **kwargs):
-    model = DLASeg('dla60', classes, pretrained_base=pretrained_base, **kwargs)
-    return model
-
-
-def dla102up(classes, pretrained_base=None, **kwargs):
-    model = DLASeg('dla102', classes,
-                   pretrained_base=pretrained_base, **kwargs)
-    return model
-
-
-def dla169up(classes, pretrained_base=None, **kwargs):
-    model = DLASeg('dla169', classes,
-                   pretrained_base=pretrained_base, **kwargs)
-    return model
-'''
 
 
 def get_pose_net(num_layers, heads, head_conv=256, down_ratio=4):

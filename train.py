@@ -1,250 +1,237 @@
-
-import torch
-from utils1.utils import download_weights,get_classes,show_config
-from models.model import CenterNet_Resnet,CenterNet_ConvNext,CenterNet_Dla34,CenterNet_ResnetX
-import numpy as np
-
-import datetime
-
-import torch.backends.cudnn as cudnn
-import torch.optim as optim
-from database.dataloader import CenternetDataset, centernet_dataset_collate
+import argparse
+import os.path
 from torch.utils.data import DataLoader
-from utils1.utils_fit import fit_one_epoch
-from models.centernet_training import get_lr_scheduler, set_optimizer_lr
+from utils import get_logger,get_config,trainval_one_epoch
+import torch
+import numpy as np
+import random
+from model.models import CenterNet_ResNet,CenterNet_ResNetX,CenterNet_DLA34
+from dataset.dataloader import MyDataSet,centernet_dataset_collate
+import datetime
 from torch.utils.tensorboard import SummaryWriter
+from thop import profile
 
 
-if __name__ == "__main__":
-    Cuda = True
-    fp16 = True
-    classes_path = 'database/classes.txt'
-    model_path = ''
-    input_shape = [1024, 1024]
-    backbone = "dlax"
-    pretrained = True
-    Init_Epoch = 0
-    Freeze_Epoch = 50
-    Freeze_batch_size = 16
-    UnFreeze_Epoch = 400
-    Unfreeze_batch_size = 8
-    Freeze_Train = True
-    Init_lr = 5e-4
-    Min_lr = Init_lr * 0.01
-    optimizer_type = "adam"
-    momentum = 0.9
-    weight_decay = 1e-8
-    lr_decay_type = 'cos'
-    save_period = 1
-    save_dir = 'logs'
-    eval_flag = True
-    eval_period = 1
-    num_workers =4
-    train_annotation_path = 'database/train.txt'
-    val_annotation_path = 'database/val.txt'
 
-    import os
+def lr_set(init_lr,min_lr,batch_size,optimizer_type,model,weight_decay,epoch):
+    nbs = 64
+    lr_limit_max = 5e-4 if optimizer_type == 'adam' else 5e-2
+    lr_limit_min = 2.5e-4 if optimizer_type == 'sgd' else 5e-4
+    Init_lr_fit = min(max(batch_size / nbs * init_lr, lr_limit_min), lr_limit_max)
+    Min_lr_fit = min(max(batch_size / nbs * min_lr, lr_limit_min * 1e-2), lr_limit_max * 1e-2)
+    optimizer = {
+        'adam': torch.optim.Adam(model.parameters(), Init_lr_fit, betas=(0.9, 0.999), weight_decay=weight_decay),
+        'sgd': torch.optim.SGD(model.parameters(), Init_lr_fit, momentum=0.9, nesterov=True,
+                               weight_decay=weight_decay)
+    }[optimizer_type]
 
-    os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
+    scheduler_lr=torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,eta_min=Min_lr_fit,T_max=epoch+1, last_epoch=-1, verbose=False)
 
-    ngpus_per_node = torch.cuda.device_count()
-    if Cuda:
-        print('use cuda')
+    return optimizer,scheduler_lr
+
+
+def parse_args():
+    parser=argparse.ArgumentParser(description="Train tracking network")
+    parser.add_argument("--cuda",default=True,help="whether using GPU")
+    parser.add_argument("--amp",default=True,help="whether using AMP")
+    parser.add_argument("--seed",default=43,help="random seed")
+
+    parser.add_argument("--weight_path",default=r"",help="the path to weight_file")
+    parser.add_argument("--weight_save_path",default=r"",help="th path to save weight parameters")
+
+    parser.add_argument("--init_lr",default=5e-4,help="the initial learning rate")
+    parser.add_argument("--min_lr",default=5e-6,help="the minimal learning rate")
+    parser.add_argument("--dataset_type",default="user_defined",help="what kind of dataset do you want to use")
+    parser.add_argument("--optimizer_type",default="adam",help="what kind of optimizer do you want to use")
+    parser.add_argument("--pretrained",default=True,help="whether to use pretrained model")
+    parser.add_argument("--freezing_epoch",default=50,help="the amount of freezeing epoch")
+    parser.add_argument("--freezing_flag",default=True,help="whether to freeze the network")
+    parser.add_argument("--freezing_batch_size", default=16)
+    parser.add_argument("--unfreezing_batch_size",default=8)
+    parser.add_argument("--model_type",default="mask_rcnn",help="choose a kind of model to train")
+    parser.add_argument("--image_shape", default=[800,800], help="the shape of the image")
+    parser.add_argument("--class_amount", default=2, help="how many classes do you want to anaylse")
+    parser.add_argument("--num_workes", default=2)
+    parser.add_argument("--weight_decay", default=1e-8)
+    parser.add_argument("--epoch", default=400)
+    args = parser.parse_args()
+    return args
+
+
+
+def set_seed(seed):
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+    np.random.seed(seed)  # Numpy module.
+    random.seed(seed)  # Python random module.
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+
+
+
+def train():
+    config = get_config(os.getcwd())
+    args = parse_args()
+    if args.cuda==True and torch.cuda.is_available():
         device = torch.device("cuda")
+        set_seed(args.seed)
+        if args.amp:
+            from torch.cuda.amp import GradScaler
+            scaler = GradScaler()
+        else:
+            scaler = None
     else:
         device = torch.device("cpu")
 
 
 
-
-    class_names,num_classes = get_classes(classes_path)
-
-    if backbone == "resnet101":
-        model = CenterNet_Resnet(num_classes, pretrained=pretrained)
-    if backbone == "resnet50X":
-        model = CenterNet_ResnetX(num_classes, pretrained=pretrained)
-    if backbone == 'dla':
-        model = CenterNet_Dla34(num_classes)
-    if backbone == 'convnext':
-        model = CenterNet_ConvNext(num_classes, pretrained=pretrained)
+    if args.model_type == "resnet50":
+        model = CenterNet_ResNet(numclass=args.class_amount,pretrain=True,resnet_flag="resnet50")
+    elif args.model_type=="resnet101":
+        model = CenterNet_ResNet(numclass=args.class_amount,pretrain=True,resnet_flag="resnet101")
+    elif args.model_type=="resnetx":
+        model = CenterNet_ResNetX(numclass=args.class_amount,pretrained=True)
+    elif args.model_type=="dla34":
+        model = CenterNet_DLA34(numclasses=args.class_amount,pretrained=True)
 
 
 
 
 
-    if model_path != '':
-        print('Load weights {}.'.format(model_path))
-        model_dict = model.state_dict()
-        pretrained_dict = torch.load(model_path, map_location=device)
-        load_key, no_load_key, temp_dict = [], [], {}
-        for k, v in pretrained_dict.items():
-            if k in model_dict.keys() and np.shape(model_dict[k]) == np.shape(v):
-                temp_dict[k] = v
-                load_key.append(k)
-            else:
-                no_load_key.append(k)
-        model_dict.update(temp_dict)
-        model.load_state_dict(model_dict)
+    model = model.to(device=device)
 
-        print("\nSuccessful Load Key:", str(load_key)[:500], "……\nSuccessful Load Key Num:", len(load_key))
-        print("\nFail To Load Key:", str(no_load_key)[:500], "……\nFail To Load Key num:", len(no_load_key))
-        print("\n\033[1;33;44m[Warning],It is normal that the Head part is not loaded, "
-              "and it is an error that the Backbone part is not loaded.\033[0m")
+    if args.dataset_type == "user_defined":
+        with open(config["train_dataset"]) as f:
+            train_annotation = f.readlines()
+            if train_annotation[-1] == "":
+                del train_annotation[-1]
+        num_trainset = len(train_annotation)
+
+
+        with open(config["val_dataset"]) as f:
+            val_annotation = f.readlines()
+            if val_annotation[-1] == "":
+                del val_annotation[-1]
+        num_testset = len(val_annotation)
+
+    train_dataset=MyDataSet(data_annotation=train_annotation,shape=args.image_shape,
+                            classes_amount=args.class_amount,flag=True)
+    val_dataset = MyDataSet(data_annotation=val_annotation,shape=args.image_shape,
+                            classes_amount=args.class_amount,flag=False)
+
+
+    if args.pretrained and os.path.exists(args.weight_path):
+        static_dict = model.state_dict()
+        new_static_dict = torch.load(args.weight_path,map_location=device)
+        for key,value in new_static_dict.items():
+            if key in static_dict.keys():
+                if static_dict[key].shape == new_static_dict[key].shape:
+                    static_dict[key] = new_static_dict[key]
+
+        model.load_state_dict(static_dict)
+        print("pretrained weights has been loaded")
+
 
     time_str = datetime.datetime.strftime(datetime.datetime.now(), '%Y_%m_%d_%H_%M_%S')
-    logboard_dir = os.path.join(save_dir,"loss_board_"+str(time_str))
-    writer = SummaryWriter(logboard_dir)
+    os.mkdir(time_str)
+    print("Log folder has been created")
+    logger = get_logger(time_str)
+    logger.debug(f"The details of training：\nepoch:{args.epoch}\npretrained:{args.pretrained}\n"
+                 f"freezing_flag:{args.freezing_flag}\nfreezing_epoch:{args.freezing_epoch}\n"
+                 f"unfreezing_batch_size:{args.unfreezing_batch_size}\nfreezing_epoch_size:{args.freezing_batch_size}")
+    logger.debug(f"\n")
+    logger.debug(f"The details of optimaizer：\noptimizer:{args.optimizer_type}\ninit_lr:{args.init_lr}\nmin_lr:{args.min_lr}")
+    logger.debug(f"\n")
 
-    if fp16:
-        from torch.cuda.amp import GradScaler as GradScaler
+    writer = SummaryWriter(log_dir=os.path.join(time_str,"tensorbord_log"))
+    input = torch.from_numpy(np.random.rand(1,3,args.image_shape[0],args.image_shape[1])).type(torch.FloatTensor)
+    if args.cuda:
+        input=input.cuda()
 
-        scaler = GradScaler()
-    else:
-        scaler = None
-
-    model_train = model.train()
-    if Cuda:
-        model_train = torch.nn.DataParallel(model)
-        cudnn.benchmark = True
-        model_train = model_train.cuda()
-
-    with open(train_annotation_path) as f:
-        train_lines = f.readlines()
-    with open(val_annotation_path) as f:
-        val_lines = f.readlines()
-
-    num_train = len(train_lines)
-    num_val = len(val_lines)
-
-    show_config(
-        classes_path=classes_path, model_path=model_path, input_shape=input_shape, \
-        Init_Epoch=Init_Epoch, Freeze_Epoch=Freeze_Epoch, UnFreeze_Epoch=UnFreeze_Epoch,
-        Freeze_batch_size=Freeze_batch_size, Unfreeze_batch_size=Unfreeze_batch_size, Freeze_Train=Freeze_Train, \
-        Init_lr=Init_lr, Min_lr=Min_lr, optimizer_type=optimizer_type, momentum=momentum, lr_decay_type=lr_decay_type, \
-        save_period=save_period, save_dir=save_dir, num_workers=num_workers, num_train=num_train, num_val=num_val
-    )
-
-    wanted_step = 5e4 if optimizer_type == "sgd" else 1.5e2
-    total_step = num_train // Unfreeze_batch_size * UnFreeze_Epoch
-    if total_step <= wanted_step:
-        if num_train // Unfreeze_batch_size == 0:
-            raise ValueError('The dataset is too small for training, please expand the dataset.')
-        wanted_epoch = wanted_step // (num_train // Unfreeze_batch_size) + 1
-        print("\n\033[1;33;44m[Warning] When using the %s , "
-              "it is recommended to set the total training step size above %d .\033[0m" % (
-        optimizer_type, wanted_step))
-        print(
-            "\033[1;33;44m[Warning] The total training data volume for this run is %d, "
-            "Unfreeze_batch_size is %d, a total of %d Epochs are trained, "
-            "and the total training step size is calculated as %d.\033[0m" % (
-            num_train, Unfreeze_batch_size, UnFreeze_Epoch, total_step))
-        print("\033[1;33;44m[Warning] Since the total training step is %d, which is less than the recommended total step %d, "
-              "it is recommended to set the total Epoch to %d.\033[0m" % (
-        total_step, wanted_step, wanted_epoch))
+    writer.add_graph(model,input)
 
 
-    if True:
-        UnFreeze_flag = False
-        if backbone =='dla' :
-            Freeze_Train = False
-            UnFreeze_flag = True
-            Freeze_Epoch = 0
-            UnFreeze_Epoch = 400
-
-        if Freeze_Train:
-            model.freeze_backbone()
-
-        batch_size = Freeze_batch_size if Freeze_Train else Unfreeze_batch_size
-
-        nbs = 64
-        lr_limit_max = 5e-4 if optimizer_type == 'adam' else 5e-2
-        lr_limit_min = 2.5e-4 if optimizer_type == 'adam' else 5e-4
-        Init_lr_fit = min(max(batch_size / nbs * Init_lr, lr_limit_min), lr_limit_max)
-        Min_lr_fit = min(max(batch_size / nbs * Min_lr, lr_limit_min * 1e-2), lr_limit_max * 1e-2)
-
-        optimizer = {
-            'adam': optim.Adam(model.parameters(), Init_lr_fit, betas=(momentum, 0.999), weight_decay=weight_decay),
-            'sgd': optim.SGD(model.parameters(), Init_lr_fit, momentum=momentum, nesterov=True,
-                             weight_decay=weight_decay)
-        }[optimizer_type]
-
-        lr_scheduler_func = get_lr_scheduler(lr_decay_type, Init_lr_fit, Min_lr_fit, UnFreeze_Epoch)
-
-        train_sampler = None
-        val_sampler = None
-        shuffle = True
-
-        epoch_step = num_train//batch_size
-        epoch_step_val = num_val//batch_size
-
-        if epoch_step==0 or epoch_step_val ==0:
-            raise ValueError("Data set is too small")
-
-        train_dataset = CenternetDataset(train_lines,input_shape,num_classes,train=True)
-        val_dataset = CenternetDataset(val_lines,input_shape,num_classes,train=False)
-
-        gen = DataLoader(train_dataset, shuffle=None, batch_size=batch_size, num_workers=num_workers,
-                         pin_memory=True,drop_last=True, collate_fn=centernet_dataset_collate, sampler=None)
-        gen_val = DataLoader(val_dataset, shuffle=None, batch_size=batch_size, num_workers=num_workers,
-                             pin_memory=True,drop_last=True, collate_fn=centernet_dataset_collate, sampler=None)
+    input = torch.randn(1, 3, args.image_shape[0], args.image_shape[1]).cuda()
+    flops, params = profile(model, inputs=(input,))
+    logger.debug(
+       f"The details of the model：\nflops:{flops/1000000}M\nparams:{params/1000000}M\n")
+    logger.debug(f"\n")
 
 
 
 
-        for epoch in range(Init_Epoch,UnFreeze_Epoch):
 
-            if epoch >= Freeze_Epoch and not UnFreeze_flag and Freeze_Train:
-                batch_size = Unfreeze_batch_size
-                nbs = 64
-                lr_limit_max = 5e-4 if optimizer_type == 'adam' else 5e-2
-                lr_limit_min = 2.5e-4 if optimizer_type == 'adam' else 5e-4
-                Init_lr_fit = min(max(batch_size / nbs * Init_lr, lr_limit_min), lr_limit_max)
-                Min_lr_fit = min(max(batch_size / nbs * Min_lr, lr_limit_min * 1e-2), lr_limit_max * 1e-2)
-                optimizer = {
-                    'adam': optim.Adam(model.parameters(), Init_lr_fit, betas=(momentum, 0.999),
-                                       weight_decay=weight_decay),
-                    'sgd': optim.SGD(model.parameters(), Init_lr_fit, momentum=momentum, nesterov=True,
-                                     weight_decay=weight_decay)
-                }[optimizer_type]
-                lr_scheduler_func = get_lr_scheduler(lr_decay_type, Init_lr_fit, Min_lr_fit, UnFreeze_Epoch)
-                gen = DataLoader(train_dataset, shuffle=None, batch_size=batch_size, num_workers=num_workers,
-                                 pin_memory=True, drop_last=True, collate_fn=centernet_dataset_collate, sampler=None)
-                gen_val = DataLoader(val_dataset, shuffle=None, batch_size=batch_size, num_workers=num_workers,
-                                     pin_memory=True, drop_last=True, collate_fn=centernet_dataset_collate,
-                                     sampler=None)
+    best_val_loss=1000
+    for epoch in range(args.epoch):
+
+        if args.freezing_flag and args.freezing_epoch:
+            if epoch<args.freezing_epoch:
+                train_loader = DataLoader(train_dataset, pin_memory=True, shuffle=True, sampler=None,
+                                          batch_size=args.freezing_batch_size,
+                                          drop_last=True, collate_fn=centernet_dataset_collate,
+                                          num_workers=args.num_workes)
+
+                val_loader = DataLoader(val_dataset, pin_memory=True, shuffle=True, sampler=None,
+                                        batch_size=args.freezing_batch_size,
+                                        drop_last=True, collate_fn=centernet_dataset_collate,
+                                        num_workers=args.num_workes)
+
+                model.freeze_backbone()
+                optimizer, scheduler_lr = lr_set(args.init_lr, args.min_lr, args.freezing_batch_size, args.optimizer_type,
+                                                 model=model, weight_decay=args.weight_decay, epoch=args.epoch)
+
+                epoch_step_train = num_trainset // args.freezing_batch_size
+                epoch_step_val = num_testset // args.freezing_batch_size
+            else:
+                train_loader = DataLoader(train_dataset, pin_memory=True, shuffle=True, sampler=None,
+                                          batch_size=args.unfreezing_batch_size,
+                                          drop_last=True, collate_fn=centernet_dataset_collate,
+                                          num_workers=args.num_workes)
+
+                val_loader = DataLoader(val_dataset, pin_memory=True, shuffle=True, sampler=None,
+                                        batch_size=args.unfreezing_batch_size,
+                                        drop_last=True, collate_fn=centernet_dataset_collate,
+                                        num_workers=args.num_workes)
                 model.unfreeze_backbone()
+                optimizer, scheduler_lr = lr_set(args.init_lr, args.min_lr, args.unfreezing_batch_size,
+                                                 args.optimizer_type,
+                                                 model=model, weight_decay=args.weight_decay, epoch=args.epoch)
 
-                epoch_step = num_train // batch_size
-                epoch_step_val = num_val // batch_size
+                epoch_step_train = num_trainset // args.unfreezing_batch_size
+                epoch_step_val = num_testset // args.unfreezing_batch_size
 
-                if epoch_step == 0 or epoch_step_val == 0:
-                    raise ValueError("The dataset is too small to continue the training, please expand the dataset.")
+        else:
+            train_loader = DataLoader(train_dataset, pin_memory=True, shuffle=True, sampler=None,
+                                      batch_size=args.unfreezing_batch_size,
+                                      drop_last=True, collate_fn=centernet_dataset_collate,
+                                      num_workers=args.num_workes)
 
-                UnFreeze_flag = True
+            val_loader = DataLoader(val_dataset, pin_memory=True, shuffle=True, sampler=None,
+                                    batch_size=args.unfreezing_batch_size,
+                                    drop_last=True, collate_fn=centernet_dataset_collate,
+                                    num_workers=args.num_workes)
+            model.unfreeze_backbone()
+            optimizer, scheduler_lr = lr_set(args.init_lr, args.min_lr, args.unfreezing_batch_size,
+                                             args.optimizer_type,
+                                             model=model, weight_decay=args.weight_decay, epoch=args.epoch)
 
-            set_optimizer_lr(optimizer, lr_scheduler_func, epoch)
-
-            fit_one_epoch(model_train, model, writer, optimizer, epoch,
-                              epoch_step, epoch_step_val, gen, gen_val, UnFreeze_Epoch, Cuda, fp16, scaler,
-                              save_dir, 0)
-
-
-
-
-
-
-
-
-
-
-
-
+            epoch_step_train = num_trainset // args.unfreezing_batch_size
+            epoch_step_val = num_testset // args.unfreezing_batch_size
 
 
+        print('Epoch:' + str(epoch + 1) + '/' + str(args.epoch))
+        trainval_one_epoch(train_datasets=train_loader,val_datasets=val_loader,model=model,apm=args.amp,
+                                   optimizer=optimizer,writer=writer,epoch=epoch,iter_num_train=epoch_step_train,
+                                   iter_num_val=epoch_step_val,scaler=scaler,cuda=args.cuda,lr_scheduler= scheduler_lr,
+                                    best_val_loss=best_val_loss,weigth_path = args.weight_save_path)
+
+        scheduler_lr.step()
 
 
 
-
+if __name__=="__main__":
+    train()
 
 
 

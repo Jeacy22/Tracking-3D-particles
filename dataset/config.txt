@@ -1,0 +1,12 @@
+# This is a config of this project
+
+annotation_path=\test_real\Annotation
+split_index_path=\test_real\Imageset\Main
+img_path=\test_real\PNGimage
+classes=small,big
+datatype=train,val
+
+
+# The following do not need to be set, the code is automatically generated
+train_dataset=\dataset\train.txt
+val_dataset=\dataset\val.txt

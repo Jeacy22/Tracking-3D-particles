@@ -1,10 +1,11 @@
+import os.path
 
 import torch.nn as nn
 import torch
 from torch.hub import load_state_dict_from_url
 import math
 
-from .ConvNext import Multi_Concat_Block,SiLU,Conv,SPPCSPC
+
 model_urls = {
     'resnet18': 'https://s3.amazonaws.com/pytorch/models/resnet18-5c106cde.pth',
     'resnet34': 'https://s3.amazonaws.com/pytorch/models/resnet34-333f7ec4.pth',
@@ -16,13 +17,13 @@ model_urls = {
 
 
 class BasicBlock(nn.Module):
-    expansion = 1 #每一个conv的卷积核个数的倍数
+    expansion = 1
 
-    def __init__(self, in_channel, out_channel, stride=1, downsample=None):#downsample对应虚线残差结构
+    def __init__(self, in_channel, out_channel, stride=1, downsample=None):
         super(BasicBlock, self).__init__()
         self.conv1 = nn.Conv2d(in_channels=in_channel, out_channels=out_channel,
                                kernel_size=3, stride=stride, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(out_channel)#BN处理
+        self.bn1 = nn.BatchNorm2d(out_channel)
         self.relu = nn.ReLU()
         self.conv2 = nn.Conv2d(in_channels=out_channel, out_channels=out_channel,
                                kernel_size=3, stride=1, padding=1, bias=False)
@@ -30,7 +31,7 @@ class BasicBlock(nn.Module):
         self.downsample = downsample
 
     def forward(self, x):
-        identity = x #捷径上的输出值
+        identity = x
         if self.downsample is not None:
             identity = self.downsample(x)
 
@@ -46,14 +47,14 @@ class BasicBlock(nn.Module):
 
         return out
 
-#50,101,152
+
 class Bottleneck(nn.Module):
-    expansion = 4#4倍
+    expansion = 4
 
     def __init__(self, in_channel, out_channel, stride=1, downsample=None):
         super(Bottleneck, self).__init__()
         self.conv1 = nn.Conv2d(in_channels=in_channel, out_channels=out_channel,
-                               kernel_size=1, stride=1, bias=False)  # squeeze channels
+                               kernel_size=1, stride=1, bias=False)
         self.bn1 = nn.BatchNorm2d(out_channel)
         self.relu = nn.ReLU(inplace=True)
         # -----------------------------------------
@@ -62,8 +63,8 @@ class Bottleneck(nn.Module):
         self.bn2 = nn.BatchNorm2d(out_channel)
         self.relu = nn.ReLU(inplace=True)
         # -----------------------------------------
-        self.conv3 = nn.Conv2d(in_channels=out_channel, out_channels=out_channel*self.expansion,#输出*4
-                               kernel_size=1, stride=1, bias=False)  # unsqueeze channels
+        self.conv3 = nn.Conv2d(in_channels=out_channel, out_channels=out_channel*self.expansion,
+                               kernel_size=1, stride=1, bias=False)
         self.bn3 = nn.BatchNorm2d(out_channel*self.expansion)
         self.relu = nn.ReLU(inplace=True)
         self.downsample = downsample
@@ -92,7 +93,7 @@ class Bottleneck(nn.Module):
 
 class ResNet(nn.Module):
 
-    def __init__(self, block, blocks_num, num_classes=1000, include_top=True):#block残差结构 include_top为了之后搭建更加复杂的网络
+    def __init__(self, block, blocks_num, num_classes=1000, include_top=True):
         super(ResNet, self).__init__()
         self.include_top = include_top
         self.in_channel = 64
@@ -108,7 +109,7 @@ class ResNet(nn.Module):
         self.layer3 = self._make_layer(block, 256, blocks_num[2], stride=2)
         self.layer4 = self._make_layer(block, 512, blocks_num[3], stride=2)
         if self.include_top:
-            self.avgpool = nn.AdaptiveAvgPool2d((1, 1))  # output size = (1, 1)自适应
+            self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
             self.fc = nn.Linear(512 * block.expansion, num_classes)
 
 
@@ -147,37 +148,39 @@ class ResNet(nn.Module):
         return x
 
 
-def resnet34(include_top=True,):
-    return ResNet(BasicBlock, [3, 4, 6, 3], include_top=include_top)
+
+def make_save_dir():
+    if os.path.exists("pretrained_model"):
+        return True
+    else:
+        os.mkdir("pretrained_model")
+        return True
 
 
+def loda_dict(name,backbone):
+    state_dice=load_state_dict_from_url(model_urls[name],model_dir="pretrained_model")
+    backbone.load_state_dict(state_dice,strict=False)
+    return backbone
+
+def ResNET34(pretrained):
+    backbone = ResNet(BasicBlock,[3,4,6,3],include_top=True)
+    if pretrained and make_save_dir():
+        backbone=loda_dict("resnet34", backbone)
+    return backbone
 
 
-def resnet101( include_top=True,pretrained = True):
-        model=ResNet(Bottleneck, [3, 4, 23, 3], include_top=include_top)
-        if pretrained:
-            state_dict = load_state_dict_from_url(model_urls['resnet101'], model_dir='pretrained_train/')
-            model.load_state_dict(state_dict)
+def ResNet50(pretrained):
+    backbone = ResNet(Bottleneck,[3,4,6,3],include_top=True)
+    if pretrained and make_save_dir():
+        backbone=loda_dict("resnet50",backbone)
 
-        # extract feature
-        features = list(
-            [model.conv1, model.bn1, model.relu, model.maxpool, model.layer1, model.layer2, model.layer3, model.layer4])
-        features = nn.Sequential(*features)
-        return features
+    return backbone
 
-
-def resnet50(include_top=True, pretrained=True):
-    model = ResNet(Bottleneck, [3, 4, 6, 3], include_top=include_top)
-    if pretrained:
-        state_dict = load_state_dict_from_url(model_urls['resnet101'], model_dir='pretrained_train/')
-        model.load_state_dict(state_dict)
-
-    # extract feature
-    features = list(
-        [model.conv1, model.bn1, model.relu, model.maxpool, model.layer1, model.layer2, model.layer3, model.layer4])
-    features = nn.Sequential(*features)
-    return features
-
+def ResNet101(pretrained):
+    backbone = ResNet(BasicBlock,[3,4,23,3],include_top=True)
+    if pretrained and make_save_dir():
+        backbone=loda_dict("resnet101",backbone)
+    return backbone
 
 
 class resnet_Decoder(nn.Module):
@@ -192,14 +195,6 @@ class resnet_Decoder(nn.Module):
             num_filters=[256, 128, 64],
             num_kernels=[4, 4, 4],
         )
-
-        self.apply(self._init_weights)
-
-    def _init_weights(self, m):
-        if isinstance(m, nn.Conv2d):
-            n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-            m.weight.data.normal_(0, math.sqrt(2. / n))
-
 
     def _make_deconv_layer(self, num_layers, num_filters, num_kernels):
         layers = []
@@ -216,8 +211,6 @@ class resnet_Decoder(nn.Module):
 
         return nn.Sequential(*layers)
 
-
-
     def forward(self, x):
         return self.deconv_layers(x)
 
@@ -232,7 +225,7 @@ class resnet_Head(nn.Module):
             nn.ReLU(inplace=True),
             nn.Conv2d(channel, num_classes,
                       kernel_size=1, stride=1, padding=0))
-        # 宽高预测的部分
+
         self.depth_head = nn.Sequential(
             nn.Conv2d(64, channel,
                       kernel_size=3, padding=1, bias=False),
@@ -241,7 +234,7 @@ class resnet_Head(nn.Module):
             nn.Conv2d(channel, 1,
                       kernel_size=1, stride=1, padding=0))
 
-        # 中心点预测的部分
+        #
         self.reg_head = nn.Sequential(
             nn.Conv2d(64, channel,
                       kernel_size=3, padding=1, bias=False),
@@ -250,16 +243,10 @@ class resnet_Head(nn.Module):
             nn.Conv2d(channel, 2,
                       kernel_size=1, stride=1, padding=0))
 
-        self.apply(self._init_weights)
-
-    def _init_weights(self, m):
-        if isinstance(m, nn.Conv2d):
-            n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-            m.weight.data.normal_(0, math.sqrt(2. / n))
-
 
     def forward(self, x):
         hm = self.cls_head(x).sigmoid_()
         depth = self.depth_head(x)
         offset = self.reg_head(x)
         return hm,depth, offset
+

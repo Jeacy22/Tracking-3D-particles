@@ -38,7 +38,7 @@ if __name__ == "__main__":
     ave_mean , ave_std = [0.,0.,0.] , [0.,0.,0.]
     n = 6
     sample_num = 1000
-    TRAIN_DATASET_PATH = ''
+    TRAIN_DATASET_PATH = 'F:\\3D_track\\data_big\\data4\\PNGimage'
     image_fns = glob(
         os.path.join(TRAIN_DATASET_PATH, '**.png'))  # get the address of all of the images in target folder and subfolder
     print('The number of the dataset: ', len(image_fns))
