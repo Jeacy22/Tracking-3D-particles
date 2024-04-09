@@ -1,0 +1,13 @@
+# This is a config of this project
+
+annotation_path=/root/autodl-tmp/data/data_train/Annotation
+split_index_path=/root/autodl-tmp/data/data_train/Imageset/Main
+img_path=/root/autodl-tmp/data/data_train/PNGimage
+classes=small,big
+datatype=test
+
+
+# The following do not need to be set, the code is automatically generated
+train_dataset=/root/autodl-tmp/Tracking-3D-particles/dataset/train.txt
+val_dataset=/root/autodl-tmp/Tracking-3D-particles/dataset/val.txt
+test_dataset=/root/autodl-tmp/Tracking-3D-particles/dataset/test.txt
